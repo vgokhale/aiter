@@ -30,6 +30,7 @@ def compile_mega_moe_prepare(
     num_prepare_cu: int,
     num_quant_cu: int,
     quant_cu_capacity: int,
+    quant_mode: str = "fp8",
     model_dim: int,
     payload_chunk_rows: int,
     tile_state_stride: int,
@@ -50,6 +51,8 @@ def compile_mega_moe_prepare(
     prepare_blocks = int(num_prepare_cu)
     quant_blocks = int(num_quant_cu)
     quant_cu_capacity = int(quant_cu_capacity)
+    if quant_mode != "fp8":
+        raise ValueError(f"quant_mode must be fp8, got {quant_mode!r}")
     model_dim = int(model_dim)
     num_waves = 8
     chunk_rows = int(payload_chunk_rows)
@@ -70,9 +73,10 @@ def compile_mega_moe_prepare(
         ticket: fx.Array[fx.Int64, 1, 8]
         count_scratch: fx.Array[fx.Int32, total_segments, 16]
 
+    quant_suffix = ""
     kernel_name = (
         f"megamoe_prepare_compact_m{tile_m}_dcu{dispatch_blocks}_pcu{prepare_blocks}_pc{chunk_rows}"
-        f"_qcu{quant_blocks}qcap{quant_cu_capacity}"
+        f"_qcu{quant_blocks}qcap{quant_cu_capacity}{quant_suffix}"
         "_fov_runtime_dyn"
         f"_tss{tile_state_stride}_v13"
     )
@@ -174,7 +178,7 @@ def compile_mega_moe_prepare(
                 hist_rsrc = ptr_buf_tensor(local_hist, fx.Int32)
                 for segment in range(tid, total_segments, block_threads):
                     hist_rsrc[segment] = fx.Int32(0)
-                fx.rocdl.s_waitcnt(0)
+                fx.rocdl.s_waitcnt(vmcnt=0, lgkmcnt=0, expcnt=0)
                 fx.barrier()
                 if tid == fx.Int32(0):
                     comm_ops.store_i32_system(
